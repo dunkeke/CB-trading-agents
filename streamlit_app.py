@@ -187,6 +187,65 @@ def get_cbond_spot_eastmoney() -> Optional[pd.DataFrame]:
         return None
 
 
+
+
+def calc_td9(df: pd.DataFrame) -> pd.DataFrame:
+    work = df.copy().sort_values("trade_date").reset_index(drop=True)
+    work["td_buy_setup"] = 0
+    work["td_sell_setup"] = 0
+    buy_count = 0
+    sell_count = 0
+    for i in range(len(work)):
+        if i < 4:
+            continue
+        close_now = work.loc[i, "close"]
+        close_4 = work.loc[i - 4, "close"]
+        if close_now < close_4:
+            buy_count += 1
+            sell_count = 0
+        elif close_now > close_4:
+            sell_count += 1
+            buy_count = 0
+        else:
+            buy_count = 0
+            sell_count = 0
+        work.loc[i, "td_buy_setup"] = min(buy_count, 9)
+        work.loc[i, "td_sell_setup"] = min(sell_count, 9)
+    work["td9_signal"] = "NONE"
+    work.loc[work["td_buy_setup"] >= 9, "td9_signal"] = "TD9_BUY"
+    work.loc[work["td_sell_setup"] >= 9, "td9_signal"] = "TD9_SELL"
+    return work
+
+
+def build_agent_discussion(latest_row: pd.Series) -> list[dict]:
+    trend_agent = "趋势中性"
+    if latest_row.get("signal") == "BUY":
+        trend_agent = "MA趋势偏多，建议关注回踩后的低吸机会"
+    elif latest_row.get("signal") == "SELL":
+        trend_agent = "MA趋势偏空，建议控制仓位并等待止跌确认"
+
+    td9_agent = "TD9 未到关键计数"
+    if latest_row.get("td9_signal") == "TD9_BUY":
+        td9_agent = "TD9买入9触发，短线可能进入衰竭反弹窗口"
+    elif latest_row.get("td9_signal") == "TD9_SELL":
+        td9_agent = "TD9卖出9触发，短线冲高回落风险上升"
+
+    risk_agent = "风险中性"
+    ma20 = latest_row.get("ma20")
+    close = latest_row.get("close")
+    if pd.notna(ma20) and pd.notna(close):
+        if close < ma20:
+            risk_agent = "价格位于MA20下方，建议降低杠杆/仓位"
+        else:
+            risk_agent = "价格位于MA20上方，可保留趋势仓但设置止损"
+
+    return [
+        {"agent": "Trend Agent", "view": trend_agent},
+        {"agent": "TD9 Agent", "view": td9_agent},
+        {"agent": "Risk Agent", "view": risk_agent},
+    ]
+
+
 def simple_signal(df: pd.DataFrame) -> pd.DataFrame:
     work = df.copy().sort_values("trade_date")
     work["ma5"] = work["close"].rolling(5).mean()
@@ -244,12 +303,18 @@ def render() -> None:
     st.warning(result.note)
 
     sig = simple_signal(result.df)
+    sig = calc_td9(sig)
     latest = sig.iloc[-1]
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("最新收盘", f"{latest['close']:.2f}")
     c2.metric("MA5", f"{latest['ma5']:.2f}" if pd.notna(latest["ma5"]) else "N/A")
     c3.metric("MA20", f"{latest['ma20']:.2f}" if pd.notna(latest["ma20"]) else "N/A")
-    st.dataframe(sig[["trade_date", "close", "ma5", "ma20", "signal"]].tail(30), width="stretch")
+    c4.metric("TD9", latest.get("td9_signal", "NONE"))
+    st.dataframe(sig[["trade_date", "close", "ma5", "ma20", "signal", "td_buy_setup", "td_sell_setup", "td9_signal"]].tail(30), width="stretch")
+
+    st.subheader("Agents 讨论")
+    discussion = build_agent_discussion(latest)
+    st.dataframe(pd.DataFrame(discussion), width="stretch")
 
 
 if __name__ == "__main__":
