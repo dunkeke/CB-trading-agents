@@ -189,6 +189,68 @@ def get_cbond_spot_eastmoney() -> Optional[pd.DataFrame]:
 
 
 
+
+
+def get_cbond_minute_akshare(symbol: str, period: str = "120") -> Optional[pd.DataFrame]:
+    if ak is None:
+        return None
+    candidates = []
+    try:
+        candidates.append(ak.bond_zh_hs_cov_min(symbol=symbol, period=period))
+    except Exception:
+        pass
+    try:
+        candidates.append(ak.bond_zh_hs_cov_min_em(symbol=symbol, period=period))
+    except Exception:
+        pass
+
+    for df in candidates:
+        if df is None or df.empty:
+            continue
+        cols = {"datetime": "trade_time", "time": "trade_time", "date": "trade_time", "close": "close", "收盘": "close"}
+        df = df.rename(columns=cols)
+        if "trade_time" in df.columns and "close" in df.columns:
+            out = df[["trade_time", "close"]].copy()
+            out["trade_time"] = pd.to_datetime(out["trade_time"], errors="coerce")
+            out["close"] = pd.to_numeric(out["close"], errors="coerce")
+            out = out.dropna(subset=["trade_time", "close"]).sort_values("trade_time")
+            return out if not out.empty else None
+    return None
+
+
+def td9_from_series(close_series: pd.Series) -> str:
+    buy_count = 0
+    sell_count = 0
+    for i in range(len(close_series)):
+        if i < 4:
+            continue
+        now = close_series.iloc[i]
+        prev4 = close_series.iloc[i - 4]
+        if now < prev4:
+            buy_count += 1
+            sell_count = 0
+        elif now > prev4:
+            sell_count += 1
+            buy_count = 0
+        else:
+            buy_count = 0
+            sell_count = 0
+    if buy_count >= 9:
+        return "TD9_BUY"
+    if sell_count >= 9:
+        return "TD9_SELL"
+    return "NONE"
+
+
+def get_intraday_td9_signals(symbol: str) -> dict:
+    signals = {"TD9_120m": "N/A", "TD9_240m": "N/A"}
+    for p in ["120", "240"]:
+        df = get_cbond_minute_akshare(symbol, period=p)
+        if df is not None and len(df) >= 13:
+            signals[f"TD9_{p}m"] = td9_from_series(df["close"].tail(80))
+    return signals
+
+
 def calc_td9(df: pd.DataFrame) -> pd.DataFrame:
     work = df.copy().sort_values("trade_date").reset_index(drop=True)
     work["td_buy_setup"] = 0
@@ -298,18 +360,22 @@ def render() -> None:
         st.info("请输入参数后点击运行。")
         return
 
+    symbol = _normalize_bond_code(code)
     result = fetch_data(code, start, end)
+    intraday_td9 = get_intraday_td9_signals(symbol)
     st.success(f"数据源：{result.source}")
     st.warning(result.note)
 
     sig = simple_signal(result.df)
     sig = calc_td9(sig)
     latest = sig.iloc[-1]
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("最新收盘", f"{latest['close']:.2f}")
     c2.metric("MA5", f"{latest['ma5']:.2f}" if pd.notna(latest["ma5"]) else "N/A")
     c3.metric("MA20", f"{latest['ma20']:.2f}" if pd.notna(latest["ma20"]) else "N/A")
-    c4.metric("TD9", latest.get("td9_signal", "NONE"))
+    c4.metric("TD9(日线)", latest.get("td9_signal", "NONE"))
+    c5.metric("TD9(120m)", intraday_td9.get("TD9_120m", "N/A"))
+    c6.metric("TD9(240m)", intraday_td9.get("TD9_240m", "N/A"))
     st.dataframe(sig[["trade_date", "close", "ma5", "ma20", "signal", "td_buy_setup", "td_sell_setup", "td9_signal"]].tail(30), width="stretch")
 
     st.subheader("Agents 讨论")
