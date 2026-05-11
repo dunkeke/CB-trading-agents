@@ -1,73 +1,42 @@
-# React + TypeScript + Vite
+# CB Trading Agents
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+该仓库已新增 **Streamlit 可部署版本**（面向 A 股可转债交易 Agent 场景），并保留现有前后端代码结构。
 
-Currently, two official plugins are available:
+## Streamlit 版本能力
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- 双轨数据源：
+  - **主数据源：AkShare**（可转债日线，适合策略计算）
+  - **降级数据源：Sina**（实时快照，适合看盘兜底）
+- 内置一个基础 Agent 策略示例：
+  - MA5 / MA20 趋势信号（BUY / SELL / HOLD）
+- 页面可直接部署到 Streamlit Community Cloud 或自建环境。
 
-## React Compiler
+## 本地运行（Streamlit）
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-streamlit.txt
+streamlit run streamlit_app.py
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## 部署建议
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+### Streamlit Community Cloud
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+- 主文件：`streamlit_app.py`
+- 依赖文件：`requirements-streamlit.txt`
+
+### 自建 Docker / VM
+
+可直接用同样命令运行，建议结合进程守护（supervisor/systemd）与反向代理（Nginx）。
+
+## 说明
+
+1. AkShare 接口偶发受网络环境影响；程序会自动降级到新浪快照。
+2. 新浪快照模式只有当前时点数据，不建议用于历史回测。
+3. 如需进一步贴近 energy trading agents 的多 Agent 编排风格，可在此基础上继续拆分：
+   - Data Agent（多源聚合）
+   - Signal Agent（技术因子）
+   - Risk Agent（仓位/止损）
+   - Execution Agent（模拟撮合/交易指令）
