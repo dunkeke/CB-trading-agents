@@ -23,7 +23,7 @@ class DataFetchResult:
 
 
 def _normalize_bond_code(code: str) -> str:
-    code = code.strip()
+    code = code.strip().lower()
     if code.startswith(("sh", "sz")):
         return code
     if code.startswith("11"):
@@ -40,7 +40,8 @@ def get_cbond_daily_akshare(symbol: str, start: dt.date, end: dt.date) -> Option
             return None
         df = df.reset_index().rename(columns={"date": "trade_date"})
         df["trade_date"] = pd.to_datetime(df["trade_date"])
-        return df[(df["trade_date"] >= pd.to_datetime(start)) & (df["trade_date"] <= pd.to_datetime(end))].copy()
+        df = df[(df["trade_date"] >= pd.to_datetime(start)) & (df["trade_date"] <= pd.to_datetime(end))].copy()
+        return df if not df.empty else None
     except Exception:
         return None
 
@@ -50,10 +51,24 @@ def get_cbond_spot_sina() -> Optional[pd.DataFrame]:
         params = {"page": "1", "num": "5000", "sort": "changepercent", "asc": "0", "node": "cb", "symbol": ""}
         resp = requests.get(SINA_SPOT_URL, params=params, timeout=10)
         resp.raise_for_status()
-        data = resp.json()
+
+        # Sina 该接口常返回“类 JSON 文本”（单引号/无引号 key），直接 json() 可能失败
+        try:
+            data = resp.json()
+        except Exception:
+            text = resp.text.strip()
+            if not text or text in ("null", "None"):
+                return None
+            import ast
+            data = ast.literal_eval(text)
+
         if not data:
             return None
+
         df = pd.DataFrame(data)
+        if df.empty:
+            return None
+
         for col in ["trade", "pricechange", "changepercent", "volume", "amount"]:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -72,29 +87,40 @@ def simple_signal(df: pd.DataFrame) -> pd.DataFrame:
     return work
 
 
-def fetch_data(code: str, start: dt.date, end: dt.date) -> DataFetchResult:
+def fetch_data(code: str, start: dt.date, end: dt.date) -> Optional[DataFetchResult]:
     symbol = _normalize_bond_code(code)
     ak_df = get_cbond_daily_akshare(symbol, start, end)
-    if ak_df is not None and not ak_df.empty:
-        note = "使用 AkShare 日线数据进行策略分析。"
-        return DataFetchResult(df=ak_df, source="AkShare", note=note)
+    if ak_df is not None:
+        return DataFetchResult(df=ak_df, source="AkShare", note="使用 AkShare 日线数据进行策略分析。")
 
     sina_spot = get_cbond_spot_sina()
-    if sina_spot is not None and not sina_spot.empty:
+    if sina_spot is not None:
         code_plain = symbol[2:]
-        target = sina_spot[sina_spot.get("code", "") == code_plain].copy()
+        if "code" in sina_spot.columns:
+            target = sina_spot[sina_spot["code"].astype(str) == code_plain].copy()
+        else:
+            target = pd.DataFrame()
+
         if target.empty:
             target = sina_spot.head(1).copy()
+
+        if "trade" not in target.columns:
+            return None
+
         now = pd.Timestamp.now().normalize()
         target = target.rename(columns={"trade": "close"})
         target["trade_date"] = now
         target["open"] = target["close"]
         target["high"] = target["close"]
         target["low"] = target["close"]
-        note = "AkShare 不可用，已降级为新浪实时快照数据（仅用于看盘，不建议回测）。"
-        return DataFetchResult(df=target[["trade_date", "open", "high", "low", "close"]], source="Sina", note=note)
+        fallback_df = target[["trade_date", "open", "high", "low", "close"]].copy()
+        return DataFetchResult(
+            df=fallback_df,
+            source="Sina",
+            note="AkShare 不可用，已降级为新浪实时快照数据（仅用于看盘，不建议回测）。",
+        )
 
-    raise RuntimeError("数据拉取失败：AkShare 与新浪接口均不可用。")
+    return None
 
 
 def render():
@@ -119,6 +145,10 @@ def render():
 
     with st.spinner("正在拉取数据并运行策略..."):
         result = fetch_data(code, start, end)
+
+    if result is None:
+        st.error("当前无法从 AkShare 或新浪获取数据，请稍后重试，或切换网络环境。")
+        st.stop()
 
     st.success(f"数据源：{result.source}")
     if result.note:
