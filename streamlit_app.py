@@ -226,7 +226,7 @@ def render() -> None:
     c1.metric("最新收盘", f"{latest['close']:.2f}")
     c2.metric("MA5", f"{latest['ma5']:.2f}" if pd.notna(latest["ma5"]) else "N/A")
     c3.metric("MA20", f"{latest['ma20']:.2f}" if pd.notna(latest["ma20"]) else "N/A")
-    st.dataframe(sig[["trade_date", "close", "ma5", "ma20", "signal"]].tail(30), use_container_width=True)
+    st.dataframe(sig[["trade_date", "close", "ma5", "ma20", "signal"]].tail(30), width="stretch")
 
 
 if __name__ == "__main__":
