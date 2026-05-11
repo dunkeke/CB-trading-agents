@@ -2,3 +2,4 @@ streamlit>=1.35.0
 pandas>=2.2.0
 requests>=2.32.0
 akshare>=1.15.0
+baostock>=0.8.9
