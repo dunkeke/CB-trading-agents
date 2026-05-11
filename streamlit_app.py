@@ -36,7 +36,9 @@ def _normalize_bond_code(code: str) -> str:
     code = code.strip().lower()
     if code.startswith(("sh", "sz")):
         return code
-    return f"sh{code}" if code.startswith("11") else f"sz{code}"
+    if code.startswith(("11","12")):
+        return f"sh{code}" if code.startswith("11") else f"sz{code}"
+    return code
 
 
 def _build_demo_data(end: dt.date, days: int = 30) -> pd.DataFrame:
@@ -66,6 +68,27 @@ def get_cbond_daily_akshare(symbol: str, start: dt.date, end: dt.date) -> Option
         df = df.reset_index().rename(columns={"date": "trade_date"})
         df["trade_date"] = pd.to_datetime(df["trade_date"])
         return df[(df["trade_date"] >= pd.to_datetime(start)) & (df["trade_date"] <= pd.to_datetime(end))].copy()
+    except Exception:
+        return None
+
+
+
+
+def get_cbond_spot_akshare() -> Optional[pd.DataFrame]:
+    if ak is None:
+        return None
+    try:
+        df = ak.bond_zh_hs_cov_spot()
+        if df is None or df.empty:
+            return None
+        rename_map = {"symbol": "bond_code", "code": "bond_code", "name": "bond_name", "trade": "price", "price": "price"}
+        df = df.rename(columns=rename_map)
+        if "bond_code" not in df.columns:
+            return None
+        df["bond_code"] = df["bond_code"].astype(str).str.replace("sh", "", regex=False).str.replace("sz", "", regex=False)
+        if "price" in df.columns:
+            df["price"] = pd.to_numeric(df["price"], errors="coerce")
+        return df
     except Exception:
         return None
 
@@ -186,7 +209,7 @@ def fetch_data(code: str, start: dt.date, end: dt.date) -> DataFetchResult:
         if df is not None and not df.empty:
             return DataFetchResult(df, name, note)
 
-    for fn, name in [(get_cbond_spot_jisilu, "Jisilu"), (get_cbond_spot_eastmoney, "Eastmoney")]:
+    for fn, name in [(get_cbond_spot_akshare, "AkShareSpot"), (get_cbond_spot_jisilu, "Jisilu"), (get_cbond_spot_eastmoney, "Eastmoney")]:
         snap = fn()
         if snap is not None and not snap.empty:
             row = snap[snap["bond_code"].astype(str) == code_plain].copy() if "bond_code" in snap.columns else pd.DataFrame()
@@ -204,7 +227,7 @@ def fetch_data(code: str, start: dt.date, end: dt.date) -> DataFetchResult:
 def render() -> None:
     st.set_page_config(page_title="A股可转债 Trading Agents", layout="wide")
     st.title("A股可转债 Trading Agents（Streamlit 部署版）")
-    st.caption("优先级：AkShare → Baostock → Jisilu → Eastmoney → Demo")
+    st.caption("优先级：AkShare(日线) → Baostock(日线) → AkShare(快照) → Jisilu → Eastmoney → Demo")
 
     with st.sidebar:
         code = st.text_input("可转债代码", value="113601")
